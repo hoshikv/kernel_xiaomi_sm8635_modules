@@ -856,7 +856,8 @@ static void dsi_panel_update_hbm_cmd(struct dsi_panel_cmd_set *cmd_set,
 	tx_buf[2] = (value & 0x00ff);
 }
 
-int dsi_panel_set_fod_hbm(struct dsi_panel *panel, bool status)
+static int __dsi_panel_set_hbm(struct dsi_panel *panel,
+			       bool fod_hbm_enabled, bool hbm_enabled)
 {
 	struct dsi_display_mode_priv_info *priv_info;
 	struct dsi_panel_cmd_set *cmd_set;
@@ -866,13 +867,14 @@ int dsi_panel_set_fod_hbm(struct dsi_panel *panel, bool status)
 
 	mutex_lock(&panel->panel_lock);
 
-	if (status == panel->fod_hbm_enabled)
+	if (fod_hbm_enabled == panel->fod_hbm_enabled &&
+	    hbm_enabled == panel->hbm_enabled)
 		goto exit;
 
 	priv_info = panel->cur_mode->priv_info;
 	bl_level = panel->bl_config.real_bl_level;
 
-	if (status)
+	if (fod_hbm_enabled || hbm_enabled)
 		type = DSI_CMD_SET_HBM_ON;
 	else
 		type = DSI_CMD_SET_HBM_OFF;
@@ -892,12 +894,23 @@ int dsi_panel_set_fod_hbm(struct dsi_panel *panel, bool status)
 	if (rc)
 		goto exit;
 
-	panel->fod_hbm_enabled = status;
+	panel->fod_hbm_enabled = fod_hbm_enabled;
+	panel->hbm_enabled = hbm_enabled;
 
 exit:
 	mutex_unlock(&panel->panel_lock);
 
 	return rc;
+}
+
+static int dsi_panel_set_hbm(struct dsi_panel *panel, bool status)
+{
+	return __dsi_panel_set_hbm(panel, panel->fod_hbm_enabled, status);
+}
+
+int dsi_panel_set_fod_hbm(struct dsi_panel *panel, bool status)
+{
+	return __dsi_panel_set_hbm(panel, status, panel->hbm_enabled);
 }
 
 int dsi_panel_set_backlight(struct dsi_panel *panel, u32 bl_lvl)
@@ -4996,6 +5009,142 @@ static int dsi_panel_i2c_tx_cmd_set(struct dsi_panel *panel)
 		}
 	}
 	return rc;
+}
+
+static ssize_t sysfs_fod_ui_read(struct device *dev,
+	struct device_attribute *attr, char *buf)
+{
+	struct dsi_display *display = dev_get_drvdata(dev);
+	struct dsi_panel *panel = display->panel;
+	bool status;
+
+	mutex_lock(&panel->panel_lock);
+	status = panel->fod_ui;
+	mutex_unlock(&panel->panel_lock);
+
+	return snprintf(buf, PAGE_SIZE, "%u\n", status);
+}
+
+static ssize_t sysfs_force_fod_ui_read(struct device *dev,
+	struct device_attribute *attr, char *buf)
+{
+	struct dsi_display *display = dev_get_drvdata(dev);
+	struct dsi_panel *panel = display->panel;
+
+	return snprintf(buf, PAGE_SIZE, "%u\n", panel->force_fod_ui);
+}
+
+ssize_t sysfs_force_fod_ui_write(struct device *dev,
+	struct device_attribute *attr, const char *buf, size_t count)
+{
+	struct dsi_display *display = dev_get_drvdata(dev);
+	struct dsi_panel *panel = display->panel;
+	int ret;
+
+	ret = kstrtobool(buf, &panel->force_fod_ui);
+	if (ret)
+		return ret;
+
+	return count;
+}
+
+static ssize_t sysfs_fod_dim_alpha_read(struct device *dev,
+	struct device_attribute *attr, char *buf)
+{
+	struct dsi_display *display = dev_get_drvdata(dev);
+	struct dsi_panel *panel = display->panel;
+
+	return snprintf(buf, PAGE_SIZE, "%u\n", panel->fod_dim_alpha);
+}
+
+ssize_t sysfs_fod_dim_alpha_write(struct device *dev,
+	struct device_attribute *attr, const char *buf, size_t count)
+{
+	struct dsi_display *display = dev_get_drvdata(dev);
+	struct dsi_panel *panel = display->panel;
+	int value;
+
+	sscanf(buf, "%d", &value);
+
+	if (value > 255)
+		return -EINVAL;
+
+	panel->force_fod_dim_alpha = value >= 0;
+
+	if (!panel->force_fod_dim_alpha)
+		goto exit;
+
+	panel->fod_dim_alpha = value;
+
+exit:
+	return count;
+}
+
+static ssize_t sysfs_hbm_read(struct device *dev,
+	struct device_attribute *attr, char *buf)
+{
+	struct dsi_display *display = dev_get_drvdata(dev);
+	struct dsi_panel *panel = display->panel;
+
+	return snprintf(buf, PAGE_SIZE, "%u\n", panel->hbm_enabled);
+}
+
+ssize_t sysfs_hbm_write(struct device *dev,
+	struct device_attribute *attr, const char *buf, size_t count)
+{
+	struct dsi_display *display = dev_get_drvdata(dev);
+	struct dsi_panel *panel = display->panel;
+	bool status;
+	int ret;
+
+	ret = kstrtobool(buf, &status);
+	if (ret)
+		return ret;
+
+	ret = dsi_panel_set_hbm(panel, status);
+	if (ret)
+		return ret;
+
+	return count;
+}
+
+static DEVICE_ATTR(fod_ui, 0444, sysfs_fod_ui_read, NULL);
+static DEVICE_ATTR(force_fod_ui, 0644,
+		   sysfs_force_fod_ui_read,
+		   sysfs_force_fod_ui_write);
+static DEVICE_ATTR(fod_dim_alpha, 0644,
+		   sysfs_fod_dim_alpha_read,
+		   sysfs_fod_dim_alpha_write);
+static DEVICE_ATTR(hbm, 0644,
+		   sysfs_hbm_read,
+		   sysfs_hbm_write);
+
+static struct attribute *panel_attrs[] = {
+	&dev_attr_fod_ui.attr,
+	&dev_attr_fod_dim_alpha.attr,
+	&dev_attr_force_fod_ui.attr,
+	&dev_attr_hbm.attr,
+	NULL,
+};
+
+static struct attribute_group panel_attrs_group = {
+	.attrs = panel_attrs,
+};
+
+static int dsi_panel_sysfs_init(struct dsi_panel *panel)
+{
+	int rc = 0;
+
+	rc = sysfs_create_group(&panel->parent->kobj, &panel_attrs_group);
+	if (rc)
+		DSI_ERR("failed to create panel sysfs attributes\n");
+
+	return rc;
+}
+
+static void dsi_panel_sysfs_deinit(struct dsi_panel *panel)
+{
+	sysfs_remove_group(&panel->parent->kobj, &panel_attrs_group);
 }
 
 struct dsi_panel *dsi_panel_get(struct device *parent,
