@@ -871,6 +871,9 @@ static int __dsi_panel_set_hbm(struct dsi_panel *panel,
 	    hbm_enabled == panel->hbm_enabled)
 		goto exit;
 
+	if (!panel->panel_initialized)
+		goto exit;
+
 	priv_info = panel->cur_mode->priv_info;
 	bl_level = panel->bl_config.real_bl_level;
 
