@@ -339,7 +339,7 @@ struct dsi_panel {
 	struct mi_dsi_panel_cfg mi_cfg;
 	bool qsync_enable;
 	bool pending_backlight_by_qsync;
-	bool fod_hbm_enabled;
+	bool hbm_enabled;
 	u32 hbm_saved_bl_level;
 #endif
 };
