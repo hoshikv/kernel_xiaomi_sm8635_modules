@@ -856,7 +856,8 @@ static void dsi_panel_update_hbm_cmd(struct dsi_panel_cmd_set *cmd_set,
 	tx_buf[2] = (value & 0x00ff);
 }
 
-static int __dsi_panel_set_hbm(struct dsi_panel *panel,
+/* Generic HBM backend is unused when MI_DISPLAY_MODIFY is enabled. */
+static int __attribute__((unused)) __dsi_panel_set_hbm(struct dsi_panel *panel,
 			       bool fod_hbm_enabled, bool hbm_enabled)
 {
 	struct dsi_display_mode_priv_info *priv_info;
@@ -878,9 +879,9 @@ static int __dsi_panel_set_hbm(struct dsi_panel *panel,
 	bl_level = panel->bl_config.real_bl_level;
 
 	if (fod_hbm_enabled || hbm_enabled)
-		type = DSI_CMD_SET_HBM_ON;
+		type = DSI_CMD_SET_MI_HBM_ON;
 	else
-		type = DSI_CMD_SET_HBM_OFF;
+		type = DSI_CMD_SET_MI_HBM_OFF;
 
 	cmd_set = &priv_info->cmd_sets[type];
 	if (!cmd_set->cmds) {
@@ -889,7 +890,7 @@ static int __dsi_panel_set_hbm(struct dsi_panel *panel,
 		goto exit;
 	}
 
-	if (type == DSI_CMD_SET_HBM_OFF)
+	if (type == DSI_CMD_SET_MI_HBM_OFF)
 		dsi_panel_update_hbm_cmd(cmd_set, MIPI_DCS_SET_DISPLAY_BRIGHTNESS,
 					 bl_level);
 
@@ -907,13 +908,22 @@ exit:
 }
 
 static int dsi_panel_set_hbm(struct dsi_panel *panel, bool status)
-{
-	return __dsi_panel_set_hbm(panel, panel->fod_hbm_enabled, status);
-}
 
-int dsi_panel_set_fod_hbm(struct dsi_panel *panel, bool status)
 {
-	return __dsi_panel_set_hbm(panel, status, panel->hbm_enabled);
+#ifdef MI_DISPLAY_MODIFY
+	struct disp_feature_ctl ctl = {
+		.feature_id = DISP_FEATURE_HBM,
+		.feature_val = status ? FEATURE_ON : FEATURE_OFF,
+	};
+	int rc;
+
+	if (!panel)
+		return -EINVAL;
+	rc = mi_dsi_panel_set_disp_param(panel, &ctl);
+	if (!rc)
+		panel->hbm_enabled = status;
+	return rc;
+#endif
 }
 
 int dsi_panel_set_backlight(struct dsi_panel *panel, u32 bl_lvl)
@@ -2565,8 +2575,6 @@ const char *cmd_set_prop_map[DSI_CMD_SET_MAX] = {
 	"mi,mdss-dsi-disable-insert-black-command",
 	"mi,mdss-dsi-insert-black-screen-command",
 #endif
-	"qcom,mdss-dsi-hbm-on-command",
-	"qcom,mdss-dsi-hbm-off-command",
 };
 
 const char *cmd_set_state_map[DSI_CMD_SET_MAX] = {
@@ -2870,8 +2878,6 @@ const char *cmd_set_update_map[DSI_CMD_UPDATE_MAX] = {
 	"mi,mdss-dsi-dbv-327-to-326-command-update",
 	"mi,mdss-dsi-dbv-326-to-327-command-update",
 #endif
-	"qcom,mdss-dsi-hbm-on-command-state",
-	"qcom,mdss-dsi-hbm-off-command-state",
 };
 
 int dsi_panel_get_cmd_pkt_count(const char *data, u32 length, u32 *cnt)
@@ -5104,7 +5110,36 @@ ssize_t sysfs_hbm_write(struct device *dev,
 	if (ret)
 		return ret;
 
-	ret = dsi_panel_set_hbm(panel, status);
+	if (status == panel->hbm_enabled)
+		return count;
+
+	if (status) {
+		panel->hbm_saved_bl_level = panel->bl_config.bl_level;
+		ret = dsi_panel_set_hbm(panel, true);
+		if (ret)
+			return ret;
+
+		/* HBM requires the panel's full native 12-bit brightness range. */
+		panel->bl_config.bl_level = panel->bl_config.bl_max_level;
+		#ifdef MI_DISPLAY_MODIFY
+		panel->mi_cfg.last_bl_level = panel->bl_config.bl_max_level;
+		ret = dsi_panel_update_backlight(panel, panel->bl_config.bl_max_level);
+		#else
+		ret = dsi_panel_set_backlight(panel, panel->bl_config.bl_max_level);
+		#endif
+	} else {
+		ret = dsi_panel_set_hbm(panel, false);
+		if (ret)
+			return ret;
+
+		panel->bl_config.bl_level = panel->hbm_saved_bl_level;
+		#ifdef MI_DISPLAY_MODIFY
+		panel->mi_cfg.last_bl_level = panel->hbm_saved_bl_level;
+		ret = dsi_panel_update_backlight(panel, panel->hbm_saved_bl_level);
+		#else
+		ret = dsi_panel_set_backlight(panel, panel->hbm_saved_bl_level);
+		#endif
+	}
 	if (ret)
 		return ret;
 
