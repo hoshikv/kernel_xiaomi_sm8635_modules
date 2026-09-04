@@ -13,11 +13,43 @@
 #include <linux/of.h>
 #include <linux/of_gpio.h>
 #include <linux/pwm.h>
+#include <linux/kernfs.h>
+#include <linux/uidgid.h>
+#include <linux/kprobes.h>
 #include <linux/string.h>
 #include <video/mipi_display.h>
 #include <linux/jiffies.h>
 
 #include "dsi_panel.h"
+
+typedef int (*livedisplay_kernfs_setattr_t)(struct kernfs_node *,
+		const struct iattr *);
+static livedisplay_kernfs_setattr_t livedisplay_kernfs_setattr;
+
+static void livedisplay_set_owner(struct kobject *kobj, const char *name)
+{
+	struct kprobe kp = { .symbol_name = "kernfs_setattr" };
+	struct kernfs_node *kn;
+	struct iattr attrs = {
+		.ia_uid = GLOBAL_ROOT_UID,
+		.ia_gid = GLOBAL_ROOT_GID,
+		.ia_valid = ATTR_UID | ATTR_GID,
+	};
+
+	if (!livedisplay_kernfs_setattr && !register_kprobe(&kp)) {
+		livedisplay_kernfs_setattr = (livedisplay_kernfs_setattr_t)kp.addr;
+		unregister_kprobe(&kp);
+	}
+	if (!livedisplay_kernfs_setattr || !kobj || !kobj->sd)
+		return;
+	attrs.ia_uid = make_kuid(&init_user_ns, 1000);
+	attrs.ia_gid = make_kgid(&init_user_ns, 1000);
+	kn = sysfs_get_dirent(kobj->sd, name);
+	if (kn) {
+		livedisplay_kernfs_setattr(kn, &attrs);
+		sysfs_put(kn);
+	}
+}
 #include "dsi_ctrl_hw.h"
 #include "dsi_defs.h"
 #include "dsi_parser.h"
@@ -5153,9 +5185,11 @@ static DEVICE_ATTR(force_fod_ui, 0644,
 static DEVICE_ATTR(fod_dim_alpha, 0644,
 		   sysfs_fod_dim_alpha_read,
 		   sysfs_fod_dim_alpha_write);
-static DEVICE_ATTR(hbm, 0644,
-		   sysfs_hbm_read,
-		   sysfs_hbm_write);
+static struct device_attribute dev_attr_hbm = {
+	.attr = { .name = "hbm", .mode = 0660 },
+	.show = sysfs_hbm_read,
+	.store = sysfs_hbm_write,
+};
 
 static struct attribute *panel_attrs[] = {
 	&dev_attr_fod_ui.attr,
@@ -5176,6 +5210,7 @@ static int dsi_panel_sysfs_init(struct dsi_panel *panel)
 	rc = sysfs_create_group(&panel->parent->kobj, &panel_attrs_group);
 	if (rc)
 		DSI_ERR("failed to create panel sysfs attributes\n");
+	livedisplay_set_owner(&panel->parent->kobj, "hbm");
 
 	return rc;
 }
