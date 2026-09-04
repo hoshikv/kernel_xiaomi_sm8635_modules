@@ -4846,7 +4846,6 @@ int mi_dsi_panel_set_disp_param(struct dsi_panel *panel,
     break;
   case DISP_FEATURE_HBM:
     mi_cfg->feature_val[DISP_FEATURE_HBM] = ctl->feature_val;
-#ifdef CONFIG_FACTORY_BUILD
     if (ctl->feature_val == FEATURE_ON) {
       rc = dsi_panel_tx_cmd_set(panel, DSI_CMD_SET_MI_HBM_ON);
       mi_cfg->dimming_state = STATE_DIM_BLOCK;
@@ -4856,7 +4855,6 @@ int mi_dsi_panel_set_disp_param(struct dsi_panel *panel,
       rc = dsi_panel_tx_cmd_set(panel, DSI_CMD_SET_MI_HBM_OFF);
       mi_cfg->dimming_state = STATE_DIM_RESTORE;
     }
-#endif
     mi_disp_feature_event_notify_by_type(
         mi_get_disp_id(panel->type), MI_DISP_EVENT_HBM,
         sizeof(ctl->feature_val), ctl->feature_val);
