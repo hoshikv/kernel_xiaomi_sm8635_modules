@@ -1767,6 +1767,8 @@ int mi_dsi_panel_set_doze_brightness(struct dsi_panel *panel,
               get_doze_brightness_name(doze_brightness));
   }
 
+	pr_info("hoshikv-doze2: set_doze_brightness val=%s(%d) state=%d hbm_fod_on=%d aod2normal=%d rc=%d\n",
+
 exit:
   mutex_unlock(&panel->panel_lock);
 

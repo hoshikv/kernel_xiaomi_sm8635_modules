@@ -66,4 +66,19 @@ int mi_disp_update_0size_lhbm_layer(struct dsi_display *dsi_display,
                                     u32 mi_gxzw_flags);
 int mi_disp_update_0size_lhbm_info(struct dsi_panel *panel);
 
+/* hoshikv: inbuilt FOD-HBM watch — driver-side consumer of fod_press_status.
+ * The driver enqueues local-HBM (so FOD-HBM lights in doze via the HLPM gate)
+ * and emits MI_DISP_EVENT_FOD so the lib only does onFpTouch animation.
+ */
+int mi_disp_lhbm_fod_watch_create(struct disp_feature *df, int disp_id);
+int mi_disp_lhbm_fod_watch_destroy(struct disp_feature *df, int disp_id);
+int mi_disp_lhbm_fod_watch_enable(int disp_id, bool enable);
+
+/* hoshikv-fod: non-consuming touch state for the lib's fod anim poller.
+ * Returns 1 while the finger is down, 0 otherwise. Updated by the watch
+ * thread, pollable via sysfs "hoshikv_fod_state". */
+int mi_disp_lhbm_fod_get_touch_state(void);
+
+#define FOD_PRESS_STATUS_NODE	"/sys/devices/virtual/touch/touch_dev/fod_press_status"
+
 #endif /* _MI_DISP_LHBM_H_ */

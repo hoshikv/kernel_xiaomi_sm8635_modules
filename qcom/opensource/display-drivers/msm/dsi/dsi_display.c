@@ -9418,6 +9418,7 @@ int dsi_display_disable(struct dsi_display *display)
 
 	SDE_EVT32(SDE_EVTLOG_FUNC_ENTRY);
 	mutex_lock(&display->display_lock);
+	mutex_lock(&display->panel->mi_cfg.doze_lock);
 
 	/* cancel delayed work */
 	if (display->poms_pending &&
@@ -9468,6 +9469,7 @@ int dsi_display_disable(struct dsi_display *display)
 		display->panel->panel_initialized = false;
 		display->panel->power_mode = SDE_MODE_DPMS_OFF;
 	}
+	mutex_unlock(&display->panel->mi_cfg.doze_lock);
 	mutex_unlock(&display->display_lock);
 	SDE_EVT32(SDE_EVTLOG_FUNC_EXIT);
 	return rc;

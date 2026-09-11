@@ -16,6 +16,8 @@
 #include "mi_disp_feature.h"
 #include "mi_disp_print.h"
 #include "mi_dsi_display.h"
+#include "mi_disp_feature.h"
+#include "mi_disp_lhbm.h"
 
 #define to_disp_display(d) dev_get_drvdata(d)
 
@@ -384,20 +386,31 @@ static DEVICE_ATTR_RO(hw_vsync_info);
 static DEVICE_ATTR_RO(cell_id);
 static DEVICE_ATTR_RO(flatmode_check);
 
+static ssize_t hoshikv_fod_state_show(struct device *dev,
+		struct device_attribute *attr, char *buf)
+{
+	return scnprintf(buf, PAGE_SIZE, "%d\n",
+			mi_disp_lhbm_fod_get_touch_state());
+}
+static DEVICE_ATTR_RO(hoshikv_fod_state);
+
+
 static struct attribute *disp_feature_attrs[] = {
-    &dev_attr_disp_param.attr,
-    &dev_attr_mipi_rw.attr,
-    &dev_attr_panel_info.attr,
-    &dev_attr_panel_build_id.attr,
-    &dev_attr_wp_info.attr,
-    &dev_attr_dynamic_fps.attr,
-    &dev_attr_doze_brightness.attr,
-    &dev_attr_brightness_clone.attr,
-    &dev_attr_max_brightness_clone.attr,
-    &dev_attr_hw_vsync_info.attr,
-    &dev_attr_cell_id.attr,
-    &dev_attr_flatmode_check.attr,
-    NULL};
+	&dev_attr_disp_param.attr,
+	&dev_attr_mipi_rw.attr,
+	&dev_attr_panel_info.attr,
+	&dev_attr_panel_build_id.attr,
+	&dev_attr_wp_info.attr,
+	&dev_attr_dynamic_fps.attr,
+	&dev_attr_doze_brightness.attr,
+	&dev_attr_brightness_clone.attr,
+	&dev_attr_max_brightness_clone.attr,
+	&dev_attr_hw_vsync_info.attr,
+	&dev_attr_cell_id.attr,
+	&dev_attr_flatmode_check.attr,
+	&dev_attr_hoshikv_fod_state.attr,
+	NULL
+};
 
 static const struct attribute_group disp_feature_group = {
     .attrs = disp_feature_attrs,

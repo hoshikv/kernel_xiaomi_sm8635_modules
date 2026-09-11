@@ -1010,46 +1010,54 @@ int mi_dsi_display_get_fps(void *display, struct disp_fps_info *fps_info) {
   return ret;
 }
 
-int mi_dsi_display_set_doze_brightness(void *display, u32 doze_brightness) {
-  struct dsi_display *dsi_display = (struct dsi_display *)display;
-  int disp_id = MI_DISP_PRIMARY;
-  int ret = 0;
-  struct sde_kms *sde_kms = NULL;
+int mi_dsi_display_set_doze_brightness(void *display,
+			u32 doze_brightness)
+{
+	struct dsi_display *dsi_display = (struct dsi_display *)display;
+	int disp_id = MI_DISP_PRIMARY;
+	int ret = 0;
+	struct sde_kms *sde_kms = NULL;
 
-  if (!dsi_display || !dsi_display->panel) {
-    DISP_ERROR("invalid display/panel\n");
-    return -EINVAL;
-  }
+	if (!dsi_display || !dsi_display->panel) {
+		DISP_ERROR("invalid display/panel\n");
+		return -EINVAL;
+	}
 
-  if (sde_kms_is_suspend_blocked(dsi_display->drm_dev)) {
-    DISP_ERROR("sde_kms is suspended, skip to set doze brightness\n");
-    return -EBUSY;
-  }
+	pr_info("hoshikv-doze2: display_set_doze_brightness val=%u entered\n",
+		doze_brightness);
+	if (sde_kms_is_suspend_blocked(dsi_display->drm_dev)) {
+		pr_err("hoshikv-doze2: sde_kms suspended, SKIP doze brightness\n");
+		DISP_ERROR("sde_kms is suspended, skip to set doze brightness\n");
+		return -EBUSY;
+	}
 
-  sde_kms = dsi_display_get_kms(dsi_display);
-  if (!sde_kms) {
-    DISP_ERROR("invalid kms\n");
-    return -EINVAL;
-  }
+	sde_kms = dsi_display_get_kms(dsi_display);
+	if (!sde_kms) {
+		DISP_ERROR("invalid kms\n");
+		return -EINVAL;
+	}
 
-  sde_vm_lock(sde_kms);
-  if (!sde_vm_owns_hw(sde_kms)) {
-    DISP_ERROR("op not supported due to HW unavailablity\n");
-    ret = -EOPNOTSUPP;
-    goto end;
-  }
+	sde_vm_lock(sde_kms);
+	if (!sde_vm_owns_hw(sde_kms)) {
+		pr_err("hoshikv-doze2: HW unavail (vm), SKIP doze brightness\n");
+		DISP_ERROR("op not supported due to HW unavailablity\n");
+		ret = -EOPNOTSUPP;
+		goto end;
+	}
 
-  mi_dsi_acquire_wakelock(dsi_display->panel);
-  mutex_lock(&dsi_display->panel->mi_cfg.doze_lock);
-  SDE_ATRACE_BEGIN("set_doze_brightness");
-  ret = mi_dsi_panel_set_doze_brightness(dsi_display->panel, doze_brightness);
-  SDE_ATRACE_END("set_doze_brightness");
-  mutex_unlock(&dsi_display->panel->mi_cfg.doze_lock);
-  mi_dsi_release_wakelock(dsi_display->panel);
+	mi_dsi_acquire_wakelock(dsi_display->panel);
+	mutex_lock(&dsi_display->panel->mi_cfg.doze_lock);
+	SDE_ATRACE_BEGIN("set_doze_brightness");
+	ret = mi_dsi_panel_set_doze_brightness(dsi_display->panel,
+				doze_brightness);
+	SDE_ATRACE_END("set_doze_brightness");
+	pr_info("hoshikv-doze2: display_set_doze_brightness rc=%d\n", ret);
+	mutex_unlock(&dsi_display->panel->mi_cfg.doze_lock);
+	mi_dsi_release_wakelock(dsi_display->panel);
 
-  disp_id = mi_get_disp_id(dsi_display->display_type);
-  mi_disp_feature_event_notify_by_type(
-      disp_id, MI_DISP_EVENT_DOZE, sizeof(doze_brightness), doze_brightness);
+	disp_id = mi_get_disp_id(dsi_display->display_type);
+	mi_disp_feature_event_notify_by_type(disp_id, MI_DISP_EVENT_DOZE,
+			sizeof(doze_brightness), doze_brightness);
 
 end:
   sde_vm_unlock(sde_kms);
@@ -1535,25 +1543,84 @@ int mi_display_pm_suspend_delayed_work(struct dsi_display *display) {
       msecs_to_jiffies(DISPLAY_DELAY_SHUTDOWN_TIME_MS));
 }
 
-int mi_display_powerkey_callback(int status) {
-  struct dsi_display *dsi_display = mi_get_primary_dsi_display();
-  struct dsi_panel *panel;
-  struct mi_dsi_panel_cfg *mi_cfg;
+/*
+ * hoshikv-doze2: after power-off (doze entry) wait HOSHIKV_DOZE_BRIGHTNESS_DELAY_MS
+ * then drive doze brightness to DOZE_BRIGHTNESS_HBM. Without this delayed trigger
+ * the panel never leaves panel_state=ON during doze -> the local-hbm HLPM gate
+ * never selects the HLPM command and FOD-HBM cannot light. Mirrors the userspace
+ * "wait then trigger doze_brightness" flow, moved into the driver.
+ */
+static void mi_disp_doze_brightness_delayed_work_handler(struct kthread_work *work)
+{
+	struct disp_delayed_work *delayed_work = container_of(work,
+					struct disp_delayed_work, delayed_work.work);
+	struct disp_display *dd_ptr = delayed_work->dd_ptr;
+	struct dsi_display *display = (struct dsi_display *)dd_ptr->display;
 
-  if (!dsi_display || !dsi_display->panel) {
-    DISP_ERROR("invalid dsi_display or dsi_panel ptr\n");
-    return -EINVAL;
-  }
+	pr_info("hoshikv-doze2: delayed doze-brightness trigger fired, set DOZE_HBM\n");
+	if (display && display->panel)
+		mi_dsi_display_set_doze_brightness(display, DOZE_BRIGHTNESS_HBM);
+	else
+		pr_err("hoshikv-doze2: invalid display/panel, skip doze trigger\n");
 
-  panel = dsi_display->panel;
-  mi_cfg = &panel->mi_cfg;
-  mi_cfg->pmic_pwrkey_status = status;
-
-  if (status == PMIC_PWRKEY_BARK_TRIGGER) {
-    return mi_display_pm_suspend_delayed_work(dsi_display);
-  }
-  return 0;
+	kfree(delayed_work);
 }
+
+int mi_disp_doze_brightness_delayed_work(struct dsi_display *display)
+{
+	int disp_id = 0;
+	struct disp_feature *df = mi_get_disp_feature();
+	struct dsi_panel *panel;
+	struct disp_display *dd_ptr;
+	struct disp_delayed_work *doze_delayed_work;
+
+	if (!df || !display || !display->panel) {
+		pr_err("hoshikv-doze2: invalid params for delayed doze\n");
+		return -EINVAL;
+	}
+	panel = display->panel;
+
+	doze_delayed_work = kzalloc(sizeof(*doze_delayed_work), GFP_KERNEL);
+	if (!doze_delayed_work) {
+		pr_err("hoshikv-doze2: failed to allocate delayed_work\n");
+		return -ENOMEM;
+	}
+
+	disp_id = mi_get_disp_id(panel->type);
+	dd_ptr = &df->d_display[disp_id];
+
+	kthread_init_delayed_work(&doze_delayed_work->delayed_work,
+			mi_disp_doze_brightness_delayed_work_handler);
+	doze_delayed_work->dd_ptr = dd_ptr;
+	doze_delayed_work->wq = &dd_ptr->pending_wq;
+	doze_delayed_work->data = panel;
+	pr_info("hoshikv-doze2: schedule doze-brightness trigger in %dms\n",
+			HOSHIKV_DOZE_BRIGHTNESS_DELAY_MS);
+	return kthread_queue_delayed_work(dd_ptr->worker, &doze_delayed_work->delayed_work,
+				msecs_to_jiffies(HOSHIKV_DOZE_BRIGHTNESS_DELAY_MS));
+}
+
+int mi_display_powerkey_callback(int status)
+{
+	struct dsi_display *dsi_display = mi_get_primary_dsi_display();
+	struct dsi_panel *panel;
+	struct mi_dsi_panel_cfg *mi_cfg;
+
+	if (!dsi_display || !dsi_display->panel){
+		DISP_ERROR("invalid dsi_display or dsi_panel ptr\n");
+		return -EINVAL;
+	}
+
+	panel = dsi_display->panel;
+	mi_cfg = &panel->mi_cfg;
+	mi_cfg->pmic_pwrkey_status = status;
+
+	if(status == PMIC_PWRKEY_BARK_TRIGGER){
+		return mi_display_pm_suspend_delayed_work(dsi_display);
+	}
+	return 0;
+}
+
 
 module_param_string(oled_wp, oled_wp_info_str, MAX_CMDLINE_PARAM_LEN, 0600);
 MODULE_PARM_DESC(

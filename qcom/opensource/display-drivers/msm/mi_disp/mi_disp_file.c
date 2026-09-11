@@ -426,42 +426,80 @@ static int mi_disp_ioctl_set_local_hbm(struct disp_feature_client *client,
   return ret;
 }
 
-static void
-mi_disp_set_doze_brightness_work_handler(struct kthread_work *work) {
-  struct disp_work *cur_work = container_of(work, struct disp_work, work);
-  struct disp_display *dd_ptr = cur_work->dd_ptr;
-  u32 doze_brightness = *((u32 *)cur_work->data);
-  struct dsi_display *display = (struct dsi_display *)dd_ptr->display;
-  int ret = 0;
+static int mi_disp_ioctl_set_fod_mode(
+			struct disp_feature_client *client, void *data)
+{
+	struct disp_feature *df = client->df;
+	struct disp_feature_req *req = data;
+	u32 disp_id = req->base.disp_id;
+	struct disp_display *dd_ptr = NULL;
+	int enable = req->feature_val;
+	int ret = 0;
 
-  if (is_support_doze_brightness(doze_brightness)) {
-    atomic_inc(&dd_ptr->pending_doze_cnt);
-    DISP_INFO("[%s] doze_brightness = %d, pending_doze_cnt = %d\n",
-              display->display_type, doze_brightness,
-              atomic_read(&dd_ptr->pending_doze_cnt));
-    if (doze_brightness == DOZE_TO_NORMAL) {
-      ret = wait_event_interruptible(*(cur_work->wq),
-                                     dsi_panel_initialized(display->panel));
-      if (ret) {
-        /* Some event woke us up, so let's quit */
-        DISP_INFO("wait_event_interruptible ret = %d\n", ret);
-        atomic_add_unless(&dd_ptr->pending_doze_cnt, -1, 0);
-        goto exit;
-      }
-      mi_dsi_display_set_doze_brightness(dd_ptr->display, doze_brightness);
-    } else {
-      ret = wait_event_interruptible(
-          *(cur_work->wq), is_aod_and_panel_initialized(display->panel));
-      if (ret) {
-        /* Some event woke us up, so let's quit */
-        DISP_INFO("wait_event_interruptible ret = %d\n", ret);
-        atomic_add_unless(&dd_ptr->pending_doze_cnt, -1, 0);
-        goto exit;
-      }
-      mi_dsi_display_set_doze_brightness(dd_ptr->display, doze_brightness);
-    }
-    atomic_add_unless(&dd_ptr->pending_doze_cnt, -1, 0);
-  }
+	ret = mutex_lock_interruptible(&client->client_lock);
+	if (ret)
+		return ret;
+
+	if (is_support_disp_id(disp_id)) {
+		dd_ptr = &df->d_display[disp_id];
+		if (dd_ptr->intf_type == MI_INTF_DSI) {
+			/* hoshikv-fod: lib just toggles the inbuilt service; the
+			 * driver reads fod_press_status and drives FOD-HBM + doze.
+			 */
+			ret = mi_disp_lhbm_fod_watch_enable(disp_id, enable);
+			pr_info("hoshikv-fod: SET_FOD_MODE disp=%s mode=%s ret=%d\n",
+				get_disp_id_name(disp_id), enable ? "on" : "off", ret);
+		} else {
+			DISP_INFO("Unsupported display(%s intf)\n",
+				get_disp_intf_type_name(dd_ptr->intf_type));
+			ret = -EINVAL;
+		}
+	} else {
+		DISP_INFO("Unsupported display id\n");
+		ret = -EINVAL;
+	}
+
+	mutex_unlock(&client->client_lock);
+	return ret;
+}
+
+static void mi_disp_set_doze_brightness_work_handler(struct kthread_work *work)
+{
+	struct disp_work *cur_work = container_of(work,
+					struct disp_work, work);
+	struct disp_display *dd_ptr = cur_work->dd_ptr;
+	u32 doze_brightness = *((u32 *)cur_work->data);
+	struct dsi_display *display = (struct dsi_display *)dd_ptr->display;
+	int ret = 0;
+
+	if (is_support_doze_brightness(doze_brightness)) {
+		atomic_inc(&dd_ptr->pending_doze_cnt);
+		DISP_INFO("[%s] doze_brightness = %d, pending_doze_cnt = %d\n",
+				display->display_type, doze_brightness,
+				atomic_read(&dd_ptr->pending_doze_cnt));
+		if (doze_brightness == DOZE_TO_NORMAL) {
+			ret = wait_event_interruptible(*(cur_work->wq),
+				dsi_panel_initialized(display->panel));
+			if (ret) {
+				/* Some event woke us up, so let's quit */
+				DISP_INFO("wait_event_interruptible ret = %d\n", ret);
+				atomic_add_unless(&dd_ptr->pending_doze_cnt, -1, 0);
+				goto exit;
+			}
+			mi_dsi_display_set_doze_brightness(dd_ptr->display, doze_brightness);
+		} else {
+			ret = wait_event_interruptible(*(cur_work->wq),
+				is_aod_and_panel_initialized(display->panel));
+			if (ret) {
+				/* Some event woke us up, so let's quit */
+				DISP_INFO("wait_event_interruptible ret = %d\n", ret);
+				atomic_add_unless(&dd_ptr->pending_doze_cnt, -1, 0);
+				goto exit;
+			}
+			mi_dsi_display_set_doze_brightness(dd_ptr->display, doze_brightness);
+		}
+		atomic_add_unless(&dd_ptr->pending_doze_cnt, -1, 0);
+	}
 
 exit:
   kfree(cur_work);
@@ -906,23 +944,22 @@ static int mi_disp_ioctl_get_brightness(struct disp_feature_client *client,
 
 /* Ioctl table */
 static const struct disp_ioctl_desc disp_ioctls[] = {
-    DISP_IOCTL_DEF(MI_DISP_IOCTL_VERSION, mi_disp_ioctl_get_version),
-    DISP_IOCTL_DEF(MI_DISP_IOCTL_SET_FEATURE, mi_disp_ioctl_set_feature),
-    DISP_IOCTL_DEF(MI_DISP_IOCTL_SET_DOZE_BRIGHTNESS,
-                   mi_disp_ioctl_set_doze_brightness),
-    DISP_IOCTL_DEF(MI_DISP_IOCTL_GET_DOZE_BRIGHTNESS,
-                   mi_disp_ioctl_get_doze_brightness),
-    DISP_IOCTL_DEF(MI_DISP_IOCTL_GET_PANEL_INFO, mi_disp_ioctl_get_panel_info),
-    DISP_IOCTL_DEF(MI_DISP_IOCTL_GET_WP_INFO, mi_disp_ioctl_get_wp_info),
-    DISP_IOCTL_DEF(MI_DISP_IOCTL_GET_FPS, mi_disp_ioctl_get_fps),
-    DISP_IOCTL_DEF(MI_DISP_IOCTL_REGISTER_EVENT, mi_disp_ioctl_register_event),
-    DISP_IOCTL_DEF(MI_DISP_IOCTL_DEREGISTER_EVENT,
-                   mi_disp_ioctl_deregister_event),
-    DISP_IOCTL_DEF(MI_DISP_IOCTL_WRITE_DSI_CMD, mi_disp_ioctl_write_dsi_cmd),
-    DISP_IOCTL_DEF(MI_DISP_IOCTL_READ_DSI_CMD, mi_disp_ioctl_read_dsi_cmd),
-    DISP_IOCTL_DEF(MI_DISP_IOCTL_GET_BRIGHTNESS, mi_disp_ioctl_get_brightness),
-    DISP_IOCTL_DEF(MI_DISP_IOCTL_GET_FEATURE, mi_disp_ioctl_get_feature),
-    DISP_IOCTL_DEF(MI_DISP_IOCTL_SET_LOCAL_HBM, mi_disp_ioctl_set_local_hbm),
+	DISP_IOCTL_DEF(MI_DISP_IOCTL_VERSION, mi_disp_ioctl_get_version),
+	DISP_IOCTL_DEF(MI_DISP_IOCTL_SET_FEATURE, mi_disp_ioctl_set_feature),
+	DISP_IOCTL_DEF(MI_DISP_IOCTL_SET_DOZE_BRIGHTNESS, mi_disp_ioctl_set_doze_brightness),
+	DISP_IOCTL_DEF(MI_DISP_IOCTL_GET_DOZE_BRIGHTNESS, mi_disp_ioctl_get_doze_brightness),
+	DISP_IOCTL_DEF(MI_DISP_IOCTL_GET_PANEL_INFO, mi_disp_ioctl_get_panel_info),
+	DISP_IOCTL_DEF(MI_DISP_IOCTL_GET_WP_INFO, mi_disp_ioctl_get_wp_info),
+	DISP_IOCTL_DEF(MI_DISP_IOCTL_GET_FPS, mi_disp_ioctl_get_fps),
+	DISP_IOCTL_DEF(MI_DISP_IOCTL_REGISTER_EVENT, mi_disp_ioctl_register_event),
+	DISP_IOCTL_DEF(MI_DISP_IOCTL_DEREGISTER_EVENT, mi_disp_ioctl_deregister_event),
+	DISP_IOCTL_DEF(MI_DISP_IOCTL_WRITE_DSI_CMD, mi_disp_ioctl_write_dsi_cmd),
+	DISP_IOCTL_DEF(MI_DISP_IOCTL_READ_DSI_CMD, mi_disp_ioctl_read_dsi_cmd),
+	DISP_IOCTL_DEF(MI_DISP_IOCTL_GET_BRIGHTNESS, mi_disp_ioctl_get_brightness),
+	DISP_IOCTL_DEF(MI_DISP_IOCTL_GET_FEATURE, mi_disp_ioctl_get_feature),
+	DISP_IOCTL_DEF(MI_DISP_IOCTL_SET_LOCAL_HBM, mi_disp_ioctl_set_local_hbm),
+	DISP_IOCTL_DEF(MI_DISP_IOCTL_SET_FOD_MODE, mi_disp_ioctl_set_fod_mode),
+
 };
 
 #define MI_DISP_IOCTL_COUNT ARRAY_SIZE(disp_ioctls)

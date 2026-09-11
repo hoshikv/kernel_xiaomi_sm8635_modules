@@ -35,6 +35,11 @@
 #define PMIC_PWRKEY_BARK_TRIGGER 1
 #define PMIC_PWRKEY_TRIGGER 2
 #define DISPLAY_DELAY_SHUTDOWN_TIME_MS 1800
+/* hoshikv-doze2: on power-off drive doze brightness immediately (no delay) so
+ * the panel actually enters livedAOD (panel_state=DOZE_HIGH) and FOD-HBM (HLPM)
+ * can light. Mirrors the userspace "trigger doze_brightness".
+ */
+#define HOSHIKV_DOZE_BRIGHTNESS_DELAY_MS 0
 
 #ifndef ARRAY_SIZE
 #define ARRAY_SIZE(a) (sizeof(a) / sizeof((a)[0]))

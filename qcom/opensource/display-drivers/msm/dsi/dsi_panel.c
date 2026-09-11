@@ -5762,6 +5762,7 @@ int dsi_panel_set_lp1(struct dsi_panel *panel)
 	int rc = 0;
 #ifdef MI_DISPLAY_MODIFY
 	struct dsi_display *display = mi_get_primary_dsi_display();
+	bool need_set_doze = false;
 #endif
 
 	if (!panel) {
@@ -5773,6 +5774,16 @@ int dsi_panel_set_lp1(struct dsi_panel *panel)
 	if (!panel->panel_initialized)
 		goto exit;
 
+#ifdef MI_DISPLAY_MODIFY
+	if (panel->mi_cfg.panel_state == PANEL_STATE_DOZE_HIGH
+		|| panel->mi_cfg.panel_state == PANEL_STATE_DOZE_LOW
+		|| panel->mi_cfg.aod_to_normal_statue == true) {
+		DSI_INFO("panel already in aod mode, skip set DSI_CMD_SET_LP1\n");
+		goto exit;
+	} else {
+		need_set_doze = true;
+	}
+#endif
 	/*
 	 * Consider LP1->LP2->LP1.
 	 * If the panel is already in LP mode, do not need to
@@ -5791,6 +5802,19 @@ int dsi_panel_set_lp1(struct dsi_panel *panel)
 exit:
 	mutex_unlock(&panel->panel_lock);
 #ifdef MI_DISPLAY_MODIFY
+	/* hoshikv-doze2: LP1 (Doze/AOD) must actually enter livedAOD, not just
+	 * return. Instead of setting doze brightness synchronously (which the
+	 * existing userspace flow race/drops), schedule a delayed trigger:
+	 * power-off -> 0.8s -> DOZE_BRIGHTNESS_HBM (panel_state=DOZE_HIGH).
+	 * Only then does the local-hbm HLPM gate select the HLPM command and
+	 * FOD-HBM can light in doze.
+	 */
+	pr_info("hoshikv-doze2: LP1 need_set_doze=%d state=%d aod2normal=%d -> %s\n",
+		need_set_doze, panel->mi_cfg.panel_state,
+		panel->mi_cfg.aod_to_normal_statue,
+		need_set_doze ? "schedule delayed HBM trigger" : "skip (already AOD)");
+	if (need_set_doze)
+		mi_disp_doze_brightness_delayed_work(display);
 	DISP_TIME_INFO("%s panel: DSI_CMD_SET_LP1\n", panel->type);
 
 	mi_dsi_display_wakeup_pending_doze_work(display);
@@ -5832,8 +5856,15 @@ int dsi_panel_set_lp2(struct dsi_panel *panel)
 exit:
 	mutex_unlock(&panel->panel_lock);
 #ifdef MI_DISPLAY_MODIFY
+	/* hoshikv-doze2: same delayed doze-brightness trigger as LP1 so Doze_Suspend
+	 * also enters livedAOD (panel_state=DOZE_HIGH) and FOD-HBM can light.
+	 */
+	pr_info("hoshikv-doze2: LP2 need_set_doze=%d state=%d aod2normal=%d -> %s\n",
+		need_set_doze, panel->mi_cfg.panel_state,
+		panel->mi_cfg.aod_to_normal_statue,
+		need_set_doze ? "schedule delayed HBM trigger" : "skip (already AOD)");
 	if (need_set_doze)
-		mi_dsi_panel_set_doze_brightness(panel, panel->mi_cfg.doze_brightness);
+		mi_disp_doze_brightness_delayed_work(mi_get_primary_dsi_display());
 	DISP_TIME_INFO("%s panel: DSI_CMD_SET_LP2\n", panel->type);
 #endif
 	return rc;

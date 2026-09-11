@@ -105,6 +105,7 @@ ssize_t mi_dsi_display_read_cell_id(void *display, char *buf, size_t size);
 int mi_dsi_display_esd_irq_ctrl(struct dsi_display *display, bool enable);
 
 void mi_dsi_display_wakeup_pending_doze_work(struct dsi_display *display);
+int mi_disp_doze_brightness_delayed_work(struct dsi_display *display);
 
 int mi_dsi_display_check_flatmode_status(void *display, bool *status);
 

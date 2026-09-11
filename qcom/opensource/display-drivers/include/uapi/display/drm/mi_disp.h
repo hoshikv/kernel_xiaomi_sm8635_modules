@@ -980,29 +980,26 @@ static inline const char *getDispCountInfoTypeName(__u32 count_info_type) {
 
 #define MI_DISP_FEATURE_VERSION_MAJOR 1
 #define MI_DISP_FEATURE_VERSION_MINOR 0
-#define MI_DISP_FEATURE_VERSION                                                \
-  (((MI_DISP_FEATURE_VERSION_MAJOR & 0xFF) << 8) |                             \
-   (MI_DISP_FEATURE_VERSION_MINOR & 0xFF))
+#define MI_DISP_FEATURE_VERSION      (((MI_DISP_FEATURE_VERSION_MAJOR & 0xFF) << 8) | \
+                                       (MI_DISP_FEATURE_VERSION_MINOR & 0xFF))
 
-#define MI_DISP_IOCTL_VERSION _IOR('D', 0x00, struct disp_version)
-#define MI_DISP_IOCTL_SET_FEATURE _IOWR('D', 0x01, struct disp_feature_req)
-#define MI_DISP_IOCTL_SET_DOZE_BRIGHTNESS                                      \
-  _IOW('D', 0x02, struct disp_doze_brightness_req)
-#define MI_DISP_IOCTL_GET_DOZE_BRIGHTNESS                                      \
-  _IOR('D', 0x03, struct disp_doze_brightness_req)
-#define MI_DISP_IOCTL_GET_PANEL_INFO _IOWR('D', 0x04, struct disp_panel_info)
-#define MI_DISP_IOCTL_GET_WP_INFO _IOWR('D', 0x05, struct disp_wp_info)
-#define MI_DISP_IOCTL_GET_FPS _IOR('D', 0x06, struct disp_fps_info)
-#define MI_DISP_IOCTL_REGISTER_EVENT _IOW('D', 0x07, struct disp_event_req)
-#define MI_DISP_IOCTL_DEREGISTER_EVENT _IOW('D', 0x08, struct disp_event_req)
-#define MI_DISP_IOCTL_WRITE_DSI_CMD _IOW('D', 0x09, struct disp_dsi_cmd_req)
-#define MI_DISP_IOCTL_READ_DSI_CMD _IOWR('D', 0x0A, struct disp_dsi_cmd_req)
-#define MI_DISP_IOCTL_GET_BRIGHTNESS _IOR('D', 0x0B, struct disp_brightness_req)
-#define MI_DISP_IOCTL_SET_BRIGHTNESS _IOW('D', 0x0C, struct disp_brightness_req)
-#define MI_DISP_IOCTL_SET_COUNT_INFO                                           \
-  _IOWR('D', 0x0D, struct disp_count_info_req)
-#define MI_DISP_IOCTL_SET_LOCAL_HBM _IOW('D', 0x0E, struct disp_local_hbm_req)
-#define MI_DISP_IOCTL_GET_FEATURE _IOWR('D', 0x0F, struct disp_feature_req)
+#define MI_DISP_IOCTL_VERSION                  _IOR('D', 0x00, struct disp_version)
+#define MI_DISP_IOCTL_SET_FEATURE             _IOWR('D', 0x01, struct disp_feature_req)
+#define MI_DISP_IOCTL_SET_DOZE_BRIGHTNESS      _IOW('D', 0x02, struct disp_doze_brightness_req)
+#define MI_DISP_IOCTL_GET_DOZE_BRIGHTNESS      _IOR('D', 0x03, struct disp_doze_brightness_req)
+#define MI_DISP_IOCTL_GET_PANEL_INFO          _IOWR('D', 0x04, struct disp_panel_info)
+#define MI_DISP_IOCTL_GET_WP_INFO             _IOWR('D', 0x05, struct disp_wp_info)
+#define MI_DISP_IOCTL_GET_FPS                  _IOR('D', 0x06, struct disp_fps_info)
+#define MI_DISP_IOCTL_REGISTER_EVENT           _IOW('D', 0x07, struct disp_event_req)
+#define MI_DISP_IOCTL_DEREGISTER_EVENT         _IOW('D', 0x08, struct disp_event_req)
+#define MI_DISP_IOCTL_WRITE_DSI_CMD            _IOW('D', 0x09, struct disp_dsi_cmd_req)
+#define MI_DISP_IOCTL_READ_DSI_CMD            _IOWR('D', 0x0A, struct disp_dsi_cmd_req)
+#define MI_DISP_IOCTL_GET_BRIGHTNESS           _IOR('D', 0x0B, struct disp_brightness_req)
+#define MI_DISP_IOCTL_SET_BRIGHTNESS           _IOW('D', 0x0C, struct disp_brightness_req)
+#define MI_DISP_IOCTL_SET_COUNT_INFO          _IOWR('D', 0x0D, struct disp_count_info_req)
+#define MI_DISP_IOCTL_SET_LOCAL_HBM            _IOW('D', 0x0E, struct disp_local_hbm_req)
+#define MI_DISP_IOCTL_GET_FEATURE             _IOWR('D', 0x0F, struct disp_feature_req)
+#define MI_DISP_IOCTL_SET_FOD_MODE            _IOWR('D', 0x10, struct disp_feature_req)
 
 #if defined(__cplusplus)
 }
