@@ -345,11 +345,68 @@ static void aw882xx_shutdown(struct snd_pcm_substream *substream,
   }
 }
 
+static int aw882xx_find_profile_index(struct aw882xx *aw882xx, const char *name) {
+  int count = 0;
+  int i = 0;
+  char *prof_name = NULL;
+
+  count = aw882xx_dev_get_profile_count(aw882xx->aw_pa);
+  if (count <= 0)
+    return -EINVAL;
+
+  for (i = 0; i < count; i++) {
+    prof_name = aw882xx_dev_get_prof_name(aw882xx->aw_pa, i);
+    if (prof_name && !strcmp(prof_name, name))
+      return i;
+  }
+
+  return -EINVAL;
+}
+
+/* The ColorOS audio HAL (Dolby/OCenter) kicks the amplified top speaker into
+ * its earpiece (Receiver) mode when the keyguard/screen-off shows up, which
+ * silences the top speaker and kills stereo. The profile index written by
+ * userspace can vary per ACF, so we match by profile name.
+ * Force the speaker (Music) route whenever the PA is about to run for real
+ * playback - this is the single choke point reached on every PA start. */
+static void aw882xx_keep_speaker_route(struct aw882xx *aw882xx) {
+  char *prof_name = NULL;
+  int music_index = 0;
+
+  /* Only the shared speaker/earpiece amp (spksw GPIO present) can be routed
+   * to the receiver path; leave the plain sub-woofer amp untouched. */
+  if (!gpio_is_valid(aw882xx->spksw_gpio))
+    return;
+
+  prof_name = aw882xx_dev_get_prof_name(aw882xx->aw_pa,
+                                        aw882xx->aw_pa->set_prof);
+  if (!prof_name || strcmp(prof_name, "Receiver"))
+    return;
+
+  music_index = aw882xx_find_profile_index(aw882xx, "Music");
+  if (music_index < 0) {
+    aw_dev_err(aw882xx->dev, "rcv route blocked, but no Music profile found");
+    return;
+  }
+
+  aw_dev_info(aw882xx->dev,
+              "rcv route blocked during playback, force Music[%d] spksw=0",
+              music_index);
+  aw882xx_dev_set_profile_index(aw882xx->aw_pa, music_index);
+
+  if (gpio_is_valid(aw882xx->spksw_gpio)) {
+    gpio_set_value_cansleep(aw882xx->spksw_gpio, 0);
+    aw882xx->spksw_level = 0;
+  }
+}
+
 static void aw882xx_start_pa(struct aw882xx *aw882xx) {
   int ret;
   int i;
 
   aw_dev_info(aw882xx->dev, "enter");
+
+  aw882xx_keep_speaker_route(aw882xx);
 
   if (aw882xx->fw_status == AW_DEV_FW_OK) {
     if (aw882xx->allow_pw == false) {
@@ -495,38 +552,53 @@ static int aw882xx_profile_set(struct snd_kcontrol *kcontrol,
   aw_snd_soc_codec_t *codec = aw_componet_codec_ops.kcontrol_codec(kcontrol);
   struct aw882xx *aw882xx = aw_componet_codec_ops.codec_get_drvdata(codec);
   int cur_index;
+  int profile_index;
+  char *prof_name;
 
   if (aw882xx->dbg_en_prof == false) {
     aw_dev_info(codec->dev, "profile close ");
     return 0;
   }
 
+  profile_index = (int)ucontrol->value.integer.value[0];
+
   /* check value valid */
-  ret = aw882xx_dev_check_profile_index(aw882xx->aw_pa,
-                                        ucontrol->value.integer.value[0]);
+  ret = aw882xx_dev_check_profile_index(aw882xx->aw_pa, profile_index);
   if (ret) {
-    aw_dev_info(codec->dev, "unsupported index %d",
-                (int)ucontrol->value.integer.value[0]);
+    aw_dev_info(codec->dev, "unsupported index %d", profile_index);
     return -EINVAL;
+  }
+
+  /* While a playback stream is running, never let the HAL push the shared
+   * amp into earpiece (Receiver) mode - that is what silences the top
+   * speaker on keyguard/screen-off. The safe fallback is applied for good
+   * measure in aw882xx_start_pa() too, because the HAL writes this control
+   * before the PCM stream actually unmutes. */
+  prof_name = aw882xx_dev_get_prof_name(aw882xx->aw_pa, profile_index);
+  if (aw882xx->pstream && prof_name && !strcmp(prof_name, "Receiver")) {
+    int music_index = aw882xx_find_profile_index(aw882xx, "Music");
+    if (music_index >= 0) {
+      aw_dev_info(codec->dev, "reject Receiver, force Music[%d]", music_index);
+      profile_index = music_index;
+    }
   }
 
   /*check cur_index == set value*/
   cur_index = aw882xx_dev_get_profile_index(aw882xx->aw_pa);
-  if (cur_index == ucontrol->value.integer.value[0]) {
+  if (cur_index == profile_index) {
     aw_dev_info(codec->dev, "index no change");
     return 0;
   }
 
   mutex_lock(&aw882xx->lock);
-  aw882xx_dev_set_profile_index(aw882xx->aw_pa,
-                                ucontrol->value.integer.value[0]);
+  aw882xx_dev_set_profile_index(aw882xx->aw_pa, profile_index);
   /*pstream = 0 no pcm just set status*/
   if (aw882xx->pstream && aw882xx->allow_pw) {
     aw882xx_device_stop(aw882xx->aw_pa);
     aw882xx_start_pa(aw882xx);
   }
   mutex_unlock(&aw882xx->lock);
-  aw_dev_info(codec->dev, "prof id %d", (int)ucontrol->value.integer.value[0]);
+  aw_dev_info(codec->dev, "prof id %d", profile_index);
 
   return 1;
 }
@@ -1301,6 +1373,13 @@ static int aw882xx_spksw_gpio_put(struct snd_kcontrol *kcontrol,
   int spksw_gpio = ucontrol->value.enumerated.item[0];
 
   dev_info(aw882xx->dev, "spksw = %d\n", spksw_gpio);
+
+  /* The HAL pairs the Receiver profile with spksw=1 (earpiece route). If a
+   * playback stream is alive, keep the amp on the loudspeaker. */
+  if (spksw_gpio == 1 && aw882xx->pstream) {
+    dev_info(aw882xx->dev, "block spksw=1 during active playback\n");
+    return 0;
+  }
 
   gpio_set_value_cansleep(aw882xx->spksw_gpio, !!spksw_gpio);
 
