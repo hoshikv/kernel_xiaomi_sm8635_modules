@@ -237,6 +237,13 @@ static int fsm_spksw_gpio_put(struct snd_kcontrol *kcontrol,
 
   pr_info("spksw = %d\n", spksw_level);
 
+  /* The HAL pairs the RCV scene with spksw=1 (earpiece route). If a playback
+   * stream is alive, keep the amp on the loudspeaker. */
+  if (cfg && spksw_level == 1 && !cfg->stream_muted) {
+    pr_info("block spksw=1 during active stream");
+    return 0;
+  }
+
   gpio_set_value_cansleep(cfg->spksw_gpio, !!spksw_level);
 
   return 0;

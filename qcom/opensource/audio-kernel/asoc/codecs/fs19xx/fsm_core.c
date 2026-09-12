@@ -4,6 +4,7 @@
  */
 
 #include "fsm_public.h"
+#include <linux/gpio.h>
 
 #define CRC16_TABLE_SIZE 256
 #define CRC16_POLY_NOMIAL 0xA001
@@ -1299,6 +1300,25 @@ void fsm_set_scene(int scene) {
     cfg->next_scene = FSM_SCENE_VOIP_ULTRA;
   }
 
+  /* Guard: never let the HAL push the shared amp into earpiece (RCV) mode
+   * while a playback stream is active - that is what silences the top
+   * speaker and kills stereo on keyguard/screen-off. Keep the Music scene.
+   * Use pre-off stream_on so this also fires for mid-playback scene writes.
+   * The final fallback is in fsm_speaker_onn() because the HAL writes the
+   * scene while the stream is still muted before it unmutes. */
+  if ((cfg->next_scene & FSM_SCENE_RCV) && stream_on) {
+    pr_info("rcv scene blocked while stream active, force MUSIC");
+    cfg->next_scene = FSM_SCENE_MUSIC;
+    if ((cfg->next_scene == FSM_SCENE_MUSIC) && cfg->ultrasound_on &&
+        !cfg->force_calib) {
+      cfg->next_scene = FSM_SCENE_VOIP_ULTRA;
+    }
+    if (gpio_is_valid(cfg->spksw_gpio)) {
+      gpio_set_value_cansleep(cfg->spksw_gpio, 0);
+      cfg->spksw_level = 0;
+    }
+  }
+
   fsm_list_func(fsm_dev, fsm_stub_switch_preset);
   fsm_mutex_unlock();
 
@@ -1485,6 +1505,23 @@ void fsm_speaker_onn(void) {
   pr_info("scene: %04X", cfg->next_scene);
   if (cfg->speaker_on)
     return;
+
+  /* Guard: never let the HAL start the shared amp in earpiece (RCV) mode -
+   * the keyguard bug that silences the top speaker and kills stereo.
+   * Force the Music scene and bank the loudspeaker switch. */
+  if (cfg->next_scene & FSM_SCENE_RCV) {
+    pr_info("rcv scene blocked on speaker on, force MUSIC");
+    cfg->next_scene = FSM_SCENE_MUSIC;
+    if ((cfg->next_scene == FSM_SCENE_MUSIC) && cfg->ultrasound_on &&
+        !cfg->force_calib) {
+      cfg->next_scene = FSM_SCENE_VOIP_ULTRA;
+    }
+    if (gpio_is_valid(cfg->spksw_gpio)) {
+      gpio_set_value_cansleep(cfg->spksw_gpio, 0);
+      cfg->spksw_level = 0;
+    }
+  }
+
   fsm_mutex_lock();
   cfg->stream_muted = false;
   ret = fsm_try_init();
